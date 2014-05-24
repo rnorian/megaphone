@@ -6,7 +6,10 @@ class UrlMappings {
                 // apply constraints here
             }
         }
-
+/*
+        "/contactLists"(resources:'contactList') {
+        }
+*/
         "/"(view:"/index")
         "500"(view:'/error')
 	}

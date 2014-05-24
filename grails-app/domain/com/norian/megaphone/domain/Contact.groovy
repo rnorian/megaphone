@@ -11,7 +11,7 @@ class Contact extends MessageTarget {
     static constraints = {
     }
 
-    /*
+    @Override
     SendResult sendMessage(String pMessage) {
         SendResult result = new SendResult()
         result.status = ResultStatus.Succeeded
@@ -19,5 +19,4 @@ class Contact extends MessageTarget {
 
         return result
     }
-    */
 }
