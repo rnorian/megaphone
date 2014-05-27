@@ -4,53 +4,141 @@ import grails.rest.*
 
 import com.norian.megaphone.domain.ApprovedSender
 import com.norian.megaphone.domain.Shout
+import org.codehaus.groovy.grails.web.servlet.mvc.GrailsParameterMap
 
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 
+import static org.springframework.http.HttpStatus.BAD_REQUEST
+import static org.springframework.http.HttpStatus.OK
 
+
+/**
+ * Shout Message Format
+ * TO:<message-target>[,<message-target>]
+ * AT:<time> | <date-time>
+ * MSG:<text>$ | TEMPLATE:<template-name>
+ *
+ * defaults:
+ * <to> first line of text
+ * <at> send now
+ * <msg> all lines after first line
+ *
+ *
+ */
 class ShoutController extends RestfulController {
 
     static responseFormats = ['json', 'xml']
-    static Pattern toTargetPattern = Pattern.compile('^(TO:)?+(.*)$?', Pattern.CASE_INSENSITIVE)
+    static Pattern toTargetPattern = ~/^(?i)(TO:)?+(.*)$?/
+    static Pattern atPattern = ~/^(?i)(AT:)?+(.*)$?/
+    static Pattern msgPattern = ~/^(?i)(MSG:)?+(.*)$?/
+
+    //static Pattern toTargetPattern = Pattern.compile('^(TO:)?+(.*)$?', Pattern.CASE_INSENSITIVE)
 
     ShoutController() {
         super(Shout)
     }
 
-    def index() {
+    def index(Integer max) {
         log.error("GET shouts")
-        render Shout.list()
+        params.max = Math.min(max ?: 10, 100)
+        respond Shout.list(params), [status: OK]
     }
 
-    def save(Shout shout) {
+    List<String> validateParms(GrailsParameterMap params) {
+        def errors = new ArrayList<String>();
 
-        def errors = []
+        // Twilio passed data of received text
+        if (params.MessageSid == null) {
+            errors.add('no Twilio MessageSid found')
+        }
 
-        log.info('new message received ' + params.toString() + '\t' + params.Body)
+        if (params.From == null) {
+            errors.add('no Twilio From specified')
+        } else {
+            def approvedSender = ApprovedSender.findByPhoneNumber(params.From)
+            if (approvedSender == null) {
+                errors.add('sender (' + params.From + ') not approved');
+                def contact = Contact.findByPhoneNumber(params.From)
+                if (contact != null) {
+                    errors.add('-- sender is ' + contact)
+                }
+            }
+        }
+
+        if (params.Body == null) {
+            errors.add('no Twilio Body specified')
+        }
+
+        return errors;
+    }
+
+    def List<String> validateMessage(String msg) {
+        def errors = new ArrayList<String>()
+
+        def sections = msg.split('\n')
+        if (sections.size() < 2) {
+            errors.add 'no discernible message parts (TO:, MSG:) - ignored'
+            return errors
+        }
+
+        def parsers = ['TO': toTargetPattern, 'AT': atPattern, 'MSG': msgPattern]
+
+        // run each parser over each section of input; if a match is found store it in the sectionMap
+        def sectionMap = [:]
+        parsers.each {k, pattern ->
+            sections.each { s ->
+                def matcher = s =~ pattern
+                if (matcher.matches()) { sectionMap[k] = s =~ matcher[0][1] }
+            }
+        }
+
+
+        def toSection = sections[0]
+        Matcher matcher = toTargetPattern.matcher(toSection)
+        if (!matcher.matches() || matcher.groupCount() < 2) {
+            log.info('could not find TO pattern - ignoring message')
+            return;
+        }
+
+        def msgTargets = matcher.group(2).split(",")
+        msgTargets.each {
+            def targets = ContactSearch.search(it)
+
+            if (targets.size() == 1) {
+                message.addToTo(targets[0])
+            } else if (targets.size() > 1) {
+                errors.add('multiple contacts found: ' + it + '\n')
+            }
+            else {
+                errors.add('unknown contact: ' + it + '\n')
+            }
+        }
+        if (message.to.size() == 0) {
+            log.info('no message targets')
+            render 'no message targets found'
+            return
+        }
+    }
+
+    def save() {
+        log.info "new message received $params"
+
+        def errors = validateParms(params)
+        if (errors.size()) {
+            def errorStr = errors.join("\n")
+            log.info("invalid request received $errorStr")
+            respond errorStr, status: BAD_REQUEST
+            return
+        }
+
+        errors = validateMessage(params.Body)
 
         Shout message = new Shout()
-        message.messageSid = params['MessageSid']
+        message.messageSid = params.MessageSid
+        message.sender = ApprovedSender.findByPhoneNumber(params.From)
+        message.message = params.Body
 
-        if (params['From'] == null) {
-            log.info('no From specified')
-            render 'Missing From'
-        }
-
-        def approvedSender = ApprovedSender.findByPhoneNumber(params['From'])
-        if (approvedSender == null) {
-            log.info('sender not approved: ' + params['From'])
-            render 'not an approved sender'
-            return;
-        }
-        message.sender = approvedSender
-
-        String msg = params.Body
-        if (msg == null || msg.isAllWhitespace()) {
-            log.info('empty message body - shout ignored')
-            render 'Missing Body'
-            return;
-        }
 
         def sections = msg.split('\n')
         if (sections.size() < 2) {

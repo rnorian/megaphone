@@ -19,4 +19,9 @@ class Contact extends MessageTarget {
 
         return result
     }
+
+    @Override
+    String toString() {
+        return "${-> firstName ?: ''} ${-> lastName ?: ''}  ${-> phoneNumber ?: ''}"
+    }
 }

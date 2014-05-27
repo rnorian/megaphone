@@ -9,11 +9,16 @@ class Shout {
     String message;
 
     Date receivedOn;
+    Date sendOn;
 
     static hasOne = [sender: ApprovedSender];
     static hasMany = [to: MessageTarget, sendResults: SendResult];
 
     static constraints = {
+        messageSid nullable: false
+        message nullable: false, blank: false
+        sendOn nullable: true
+        sender nullable: false
     }
 
     void send() {
